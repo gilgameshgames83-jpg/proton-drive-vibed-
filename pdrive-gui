@@ -1,0 +1,874 @@
+#!/usr/bin/env bash
+# pdrive-gui - unofficial GUI for the official Proton Drive CLI (upload / download).
+# NOT affiliated with, endorsed by, or sponsored by Proton AG.
+# "Proton" and "Proton Drive" are trademarks of Proton AG.
+# License: MIT (see LICENSE)
+#
+# Usage:
+#   pdrive-gui                      main menu
+#   pdrive-gui upload [FILE...]     upload files/folders
+#   pdrive-gui download [PATH...]   download from Drive (PATH like /my-files/x.pdf)
+#   pdrive-gui install [--desktop] [--icon FILE]   add to applications menu
+#   pdrive-gui uninstall
+#   pdrive-gui lang [en|ar|fr|es|de]
+
+VERSION="1.0.0"
+APP_ID="pdrive-gui"
+
+if (( BASH_VERSINFO[0] < 4 )); then echo "bash 4+ is required" >&2; exit 1; fi
+
+CONF_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/$APP_ID"
+DATA_DIR="${XDG_DATA_HOME:-$HOME/.local/share}"
+BIN_DIR="$HOME/.local/bin"
+APP_DIR="$DATA_DIR/applications"
+ICON_BASE="$DATA_DIR/icons/hicolor"
+SELF="$(readlink -f "${BASH_SOURCE[0]}")"
+TITLE="Proton Drive"
+mkdir -p "$CONF_DIR"
+
+# =====================================================================
+#  Translations.  To add a language: copy lang_en, translate, add its code
+#  to detect_lang() and to the language list in cmd_lang().
+#  Missing keys fall back to English.  Texts are printf templates (%s, \n).
+# =====================================================================
+declare -A T
+
+lang_en() { T=(
+[app_name]="Proton Drive GUI (unofficial)"
+[no_bin]="The official proton-drive CLI was not found.\nDownload it from proton.me/download/drive/cli, put it in ~/.local/bin and run:\nchmod +x proton-drive"
+[menu_q]="What do you want to do?"
+[m_upload]="Upload" [m_download]="Download" [m_lang]="Language"
+[col_choose]="Choose" [col_type]="Type" [col_name]="Name"
+[nothing]="Nothing selected."
+[not_found]="Not found:\n%s"
+[empty]="This folder is empty."
+[loc]="Current location in Proton Drive:\n%s"
+[here]="Upload here: %s"
+[last]="Last destination: %s"
+[back]="Back"
+[newf]="Create a new folder here"
+[manual]="Type a folder name manually"
+[new_name]="Name of the new folder inside %s:"
+[mk_fail]="Could not create the folder \"%s\".\nCreate it on the Proton Drive website."
+[list_fail_up]="Could not list Drive folders automatically.\nType the folder name manually in the next step."
+[manual_prompt]="Type the folder name in Proton Drive (e.g. others)\nor leave it empty for the current folder: %s"
+[up_what]="What do you want to upload?"
+[w_files]="Files" [w_folder]="A whole folder"
+[pick_files]="Choose files to upload"
+[pick_folder]="Choose the folder to upload"
+[t_path_help]="Type a file path (or drag it here), then Enter. Empty line to finish. Tab completes names."
+[t_path_prompt]="Path: "
+[t_dir_prompt]="Folder path: "
+[cq_up]="If a file with the same name already exists in Drive, what should happen?\n(Identical files are skipped automatically)"
+[c_keep]="Keep both (rename the new one)"
+[c_rev]="New revision of the existing file"
+[c_replace]="Replace the old one (old goes to trash)"
+[c_skip]="Skip the file"
+[l_keep]="keep both" [l_rev]="new revision" [l_replace]="replace (old goes to trash)" [l_skip]="skip"
+[l_remove]="WARNING: delete the matching local file and download the cloud copy"
+[l_none]="not set (the tool may ask)"
+[confirm_up]="Confirm upload"
+[confirm_dl]="Confirm download"
+[and_more]="... and %d more"
+[sum_up]="Will upload:\n%s\nTo: %s\nOn name conflict: %s\n(Existing folders are merged)"
+[sum_dl]="Will download:\n%s\nTo: %s\nOn name conflict: %s"
+[proceed]="Do you want to continue?"
+[yn_prompt]="Continue? [y/N] "
+[aborted]="Aborted."
+[uploading]="Uploading to %s ...\n(press Cancel to stop)"
+[downloading]="Downloading to %s ...\n(press Cancel to stop)"
+[up_ok]="Upload completed to:\n%s"
+[dl_ok]="Download completed to:\n%s"
+[open_q]="Open the folder?"
+[cancelled]="Cancelled. Some items may already have been transferred."
+[up_fail]="Upload failed.\n\n%s\n\nTry:\n• proton-drive auth login\n• Make sure the folder exists in Proton Drive"
+[dl_fail]="Download failed.\n\n%s\n\nTry:\n• proton-drive auth login\n• Make sure the path exists in Proton Drive"
+[dl_all]="Download this whole folder: %s"
+[dl_select]="Select files/folders from here"
+[dl_check]="Tick what you want to download from:\n%s"
+[dl_one]="Choose one item to download:"
+[dl_list_fail]="Could not list Drive contents automatically.\nType the item path manually in the next step."
+[dl_manual]="Item path in Drive (e.g. /my-files/folder/file.pdf):"
+[dl_where]="Choose where to save on your computer"
+[t_save_prompt]="Save folder on your computer"
+[cq_dl]="If a file with the same name already exists locally, what should happen?"
+[d_keep]="Keep both (rename)"
+[d_remove]="Delete the local file and download the cloud copy"
+[d_skip]="Skip existing"
+[inst_ok]="Installed.\nSearch for \"%s\" in your applications menu."
+[uninst_ok]="Uninstalled."
+[lang_q]="Choose a language"
+[opt_prompt]="Option number: "
+); }
+
+lang_ar() { T+=(
+[app_name]="واجهة Proton Drive (غير رسمية)"
+[no_bin]="لم يتم العثور على أداة proton-drive الرسمية.\nنزّلها من proton.me/download/drive/cli وضعها في ~/.local/bin ثم نفّذ:\nchmod +x proton-drive"
+[menu_q]="ماذا تريد أن تفعل؟"
+[m_upload]="رفع" [m_download]="تنزيل" [m_lang]="اللغة"
+[col_choose]="اختر" [col_type]="النوع" [col_name]="الاسم"
+[nothing]="لم تختر شيئاً."
+[not_found]="غير موجود:\n%s"
+[empty]="هذا المجلد فارغ."
+[loc]="المكان الحالي في Proton Drive:\n%s"
+[here]="الرفع إلى هنا: %s"
+[last]="آخر وجهة: %s"
+[back]="رجوع"
+[newf]="إنشاء مجلد جديد هنا"
+[manual]="كتابة اسم مجلد يدوياً"
+[new_name]="اسم المجلد الجديد داخل %s:"
+[mk_fail]="تعذّر إنشاء المجلد \"%s\".\nأنشئه من موقع Proton Drive."
+[list_fail_up]="تعذّر عرض مجلدات Drive تلقائياً.\nاكتب اسم المجلد يدوياً في الخطوة التالية."
+[manual_prompt]="اكتب اسم المجلد في Proton Drive (مثل: others)\nأو اتركه فارغاً للمجلد الحالي: %s"
+[up_what]="ماذا تريد أن ترفع؟"
+[w_files]="ملفات" [w_folder]="مجلد كامل"
+[pick_files]="اختر الملفات المراد رفعها"
+[pick_folder]="اختر المجلد المراد رفعه"
+[t_path_help]="اكتب مسار الملف (أو اسحبه إلى هنا) ثم Enter. سطر فارغ للانتهاء. زر Tab يكمل الأسماء."
+[t_path_prompt]="المسار: "
+[t_dir_prompt]="مسار المجلد: "
+[cq_up]="إذا وُجد ملف بنفس الاسم في Drive، ماذا تفعل؟\n(الملفات المطابقة تماماً تُتخطى تلقائياً)"
+[c_keep]="الاحتفاظ بالاثنين (إعادة تسمية الجديد)"
+[c_rev]="نسخة جديدة (Revision) من الملف الموجود"
+[c_replace]="استبدال القديم (ينقل القديم إلى السلة)"
+[c_skip]="تخطي الملف"
+[l_keep]="الاحتفاظ بالاثنين" [l_rev]="نسخة جديدة" [l_replace]="استبدال (القديم إلى السلة)" [l_skip]="تخطي"
+[l_remove]="تحذير: حذف الملف المحلي المطابق وتنزيل النسخة من السحابة"
+[l_none]="غير محدد (قد تسأل الأداة)"
+[confirm_up]="تأكيد الرفع"
+[confirm_dl]="تأكيد التنزيل"
+[and_more]="... و%d آخر"
+[sum_up]="سيُرفع:\n%s\nإلى: %s\nعند وجود اسم مطابق: %s\n(المجلدات الموجودة يُدمج محتواها)"
+[sum_dl]="سيُنزَّل:\n%s\nإلى: %s\nعند وجود اسم مطابق: %s"
+[proceed]="هل تريد المتابعة؟"
+[yn_prompt]="متابعة؟ [y/N] "
+[aborted]="أُلغي."
+[uploading]="جارٍ الرفع إلى %s ...\n(اضغط إلغاء للإيقاف)"
+[downloading]="جارٍ التنزيل إلى %s ...\n(اضغط إلغاء للإيقاف)"
+[up_ok]="تم الرفع بنجاح إلى:\n%s"
+[dl_ok]="تم التنزيل بنجاح إلى:\n%s"
+[open_q]="هل تريد فتح المجلد؟"
+[cancelled]="أُلغيت العملية. قد تكون بعض العناصر قد نُقلت بالفعل."
+[up_fail]="فشل الرفع.\n\n%s\n\nجرّب:\n• proton-drive auth login\n• تأكد أن المجلد موجود في Proton Drive"
+[dl_fail]="فشل التنزيل.\n\n%s\n\nجرّب:\n• proton-drive auth login\n• تأكد أن المسار موجود في Proton Drive"
+[dl_all]="تنزيل هذا المجلد كاملاً: %s"
+[dl_select]="اختيار ملفات/مجلدات من هنا"
+[dl_check]="ضع علامة على ما تريد تنزيله من:\n%s"
+[dl_one]="اختر عنصراً واحداً لتنزيله:"
+[dl_list_fail]="تعذّر عرض محتوى Drive تلقائياً.\nاكتب مسار العنصر يدوياً في الخطوة التالية."
+[dl_manual]="مسار العنصر في Drive (مثل /my-files/folder/file.pdf):"
+[dl_where]="اختر مجلد الحفظ على جهازك"
+[t_save_prompt]="مجلد الحفظ على جهازك"
+[cq_dl]="إذا وُجد ملف بنفس الاسم محلياً، ماذا تفعل؟"
+[d_keep]="الاحتفاظ بالاثنين (إعادة تسمية)"
+[d_remove]="حذف الملف المحلي وتنزيل النسخة من السحابة"
+[d_skip]="تخطي الموجود"
+[inst_ok]="تم التثبيت.\nابحث عن \"%s\" في قائمة التطبيقات."
+[uninst_ok]="تم الحذف."
+[lang_q]="اختر اللغة"
+[opt_prompt]="رقم الخيار: "
+); }
+
+lang_fr() { T+=(
+[app_name]="Proton Drive GUI (non officiel)"
+[no_bin]="Le CLI officiel proton-drive est introuvable.\nTéléchargez-le sur proton.me/download/drive/cli, placez-le dans ~/.local/bin puis exécutez :\nchmod +x proton-drive"
+[menu_q]="Que voulez-vous faire ?"
+[m_upload]="Envoyer" [m_download]="Télécharger" [m_lang]="Langue"
+[col_choose]="Choisir" [col_type]="Type" [col_name]="Nom"
+[nothing]="Rien n'est sélectionné."
+[not_found]="Introuvable :\n%s"
+[empty]="Ce dossier est vide."
+[loc]="Emplacement actuel dans Proton Drive :\n%s"
+[here]="Envoyer ici : %s"
+[last]="Dernière destination : %s"
+[back]="Retour"
+[newf]="Créer un nouveau dossier ici"
+[manual]="Saisir un nom de dossier manuellement"
+[new_name]="Nom du nouveau dossier dans %s :"
+[mk_fail]="Impossible de créer le dossier « %s ».\nCréez-le sur le site de Proton Drive."
+[list_fail_up]="Impossible de lister les dossiers de Drive automatiquement.\nSaisissez le nom du dossier à l'étape suivante."
+[manual_prompt]="Saisissez le nom du dossier dans Proton Drive (ex. : others)\nou laissez vide pour le dossier actuel : %s"
+[up_what]="Que voulez-vous envoyer ?"
+[w_files]="Des fichiers" [w_folder]="Un dossier entier"
+[pick_files]="Choisissez les fichiers à envoyer"
+[pick_folder]="Choisissez le dossier à envoyer"
+[t_path_help]="Saisissez un chemin (ou glissez-le ici), puis Entrée. Ligne vide pour terminer. Tab complète les noms."
+[t_path_prompt]="Chemin : "
+[t_dir_prompt]="Chemin du dossier : "
+[cq_up]="Si un fichier du même nom existe déjà dans Drive, que faire ?\n(Les fichiers identiques sont ignorés automatiquement)"
+[c_keep]="Garder les deux (renommer le nouveau)"
+[c_rev]="Nouvelle révision du fichier existant"
+[c_replace]="Remplacer l'ancien (il va à la corbeille)"
+[c_skip]="Ignorer le fichier"
+[l_keep]="garder les deux" [l_rev]="nouvelle révision" [l_replace]="remplacer (l'ancien va à la corbeille)" [l_skip]="ignorer"
+[l_remove]="ATTENTION : supprimer le fichier local correspondant et télécharger la copie du cloud"
+[l_none]="non défini (l'outil peut demander)"
+[confirm_up]="Confirmer l'envoi"
+[confirm_dl]="Confirmer le téléchargement"
+[and_more]="... et %d autre(s)"
+[sum_up]="Sera envoyé :\n%s\nVers : %s\nEn cas de conflit de nom : %s\n(Les dossiers existants sont fusionnés)"
+[sum_dl]="Sera téléchargé :\n%s\nVers : %s\nEn cas de conflit de nom : %s"
+[proceed]="Voulez-vous continuer ?"
+[yn_prompt]="Continuer ? [o/N] "
+[aborted]="Annulé."
+[uploading]="Envoi vers %s ...\n(cliquez sur Annuler pour arrêter)"
+[downloading]="Téléchargement vers %s ...\n(cliquez sur Annuler pour arrêter)"
+[up_ok]="Envoi terminé vers :\n%s"
+[dl_ok]="Téléchargement terminé vers :\n%s"
+[open_q]="Ouvrir le dossier ?"
+[cancelled]="Annulé. Certains éléments ont peut-être déjà été transférés."
+[up_fail]="Échec de l'envoi.\n\n%s\n\nEssayez :\n• proton-drive auth login\n• Vérifiez que le dossier existe dans Proton Drive"
+[dl_fail]="Échec du téléchargement.\n\n%s\n\nEssayez :\n• proton-drive auth login\n• Vérifiez que le chemin existe dans Proton Drive"
+[dl_all]="Télécharger tout ce dossier : %s"
+[dl_select]="Choisir des fichiers/dossiers ici"
+[dl_check]="Cochez ce que vous voulez télécharger depuis :\n%s"
+[dl_one]="Choisissez un élément à télécharger :"
+[dl_list_fail]="Impossible de lister le contenu de Drive automatiquement.\nSaisissez le chemin de l'élément à l'étape suivante."
+[dl_manual]="Chemin de l'élément dans Drive (ex. : /my-files/dossier/fichier.pdf) :"
+[dl_where]="Choisissez où enregistrer sur votre ordinateur"
+[t_save_prompt]="Dossier d'enregistrement sur votre ordinateur"
+[cq_dl]="Si un fichier du même nom existe déjà en local, que faire ?"
+[d_keep]="Garder les deux (renommer)"
+[d_remove]="Supprimer le fichier local et télécharger la copie du cloud"
+[d_skip]="Ignorer l'existant"
+[inst_ok]="Installé.\nCherchez « %s » dans le menu des applications."
+[uninst_ok]="Désinstallé."
+[lang_q]="Choisissez une langue"
+[opt_prompt]="Numéro de l'option : "
+); }
+
+lang_es() { T+=(
+[app_name]="Proton Drive GUI (no oficial)"
+[no_bin]="No se encontró la CLI oficial proton-drive.\nDescárgala en proton.me/download/drive/cli, colócala en ~/.local/bin y ejecuta:\nchmod +x proton-drive"
+[menu_q]="¿Qué quieres hacer?"
+[m_upload]="Subir" [m_download]="Descargar" [m_lang]="Idioma"
+[col_choose]="Elegir" [col_type]="Tipo" [col_name]="Nombre"
+[nothing]="No has seleccionado nada."
+[not_found]="No encontrado:\n%s"
+[empty]="Esta carpeta está vacía."
+[loc]="Ubicación actual en Proton Drive:\n%s"
+[here]="Subir aquí: %s"
+[last]="Último destino: %s"
+[back]="Atrás"
+[newf]="Crear una carpeta nueva aquí"
+[manual]="Escribir el nombre de una carpeta"
+[new_name]="Nombre de la carpeta nueva dentro de %s:"
+[mk_fail]="No se pudo crear la carpeta «%s».\nCréala en el sitio web de Proton Drive."
+[list_fail_up]="No se pudieron listar las carpetas de Drive automáticamente.\nEscribe el nombre de la carpeta en el siguiente paso."
+[manual_prompt]="Escribe el nombre de la carpeta en Proton Drive (p. ej.: others)\no déjalo vacío para la carpeta actual: %s"
+[up_what]="¿Qué quieres subir?"
+[w_files]="Archivos" [w_folder]="Una carpeta completa"
+[pick_files]="Elige los archivos que quieres subir"
+[pick_folder]="Elige la carpeta que quieres subir"
+[t_path_help]="Escribe una ruta (o arrástrala aquí) y pulsa Enter. Línea vacía para terminar. Tab completa nombres."
+[t_path_prompt]="Ruta: "
+[t_dir_prompt]="Ruta de la carpeta: "
+[cq_up]="Si ya existe un archivo con el mismo nombre en Drive, ¿qué hacer?\n(Los archivos idénticos se omiten automáticamente)"
+[c_keep]="Conservar ambos (renombrar el nuevo)"
+[c_rev]="Nueva revisión del archivo existente"
+[c_replace]="Reemplazar el antiguo (va a la papelera)"
+[c_skip]="Omitir el archivo"
+[l_keep]="conservar ambos" [l_rev]="nueva revisión" [l_replace]="reemplazar (el antiguo va a la papelera)" [l_skip]="omitir"
+[l_remove]="AVISO: borrar el archivo local coincidente y descargar la copia de la nube"
+[l_none]="sin definir (la herramienta puede preguntar)"
+[confirm_up]="Confirmar subida"
+[confirm_dl]="Confirmar descarga"
+[and_more]="... y %d más"
+[sum_up]="Se subirá:\n%s\nA: %s\nSi el nombre ya existe: %s\n(Las carpetas existentes se combinan)"
+[sum_dl]="Se descargará:\n%s\nA: %s\nSi el nombre ya existe: %s"
+[proceed]="¿Quieres continuar?"
+[yn_prompt]="¿Continuar? [s/N] "
+[aborted]="Cancelado."
+[uploading]="Subiendo a %s ...\n(pulsa Cancelar para detener)"
+[downloading]="Descargando a %s ...\n(pulsa Cancelar para detener)"
+[up_ok]="Subida completada en:\n%s"
+[dl_ok]="Descarga completada en:\n%s"
+[open_q]="¿Abrir la carpeta?"
+[cancelled]="Cancelado. Es posible que algunos elementos ya se hayan transferido."
+[up_fail]="Falló la subida.\n\n%s\n\nPrueba:\n• proton-drive auth login\n• Comprueba que la carpeta existe en Proton Drive"
+[dl_fail]="Falló la descarga.\n\n%s\n\nPrueba:\n• proton-drive auth login\n• Comprueba que la ruta existe en Proton Drive"
+[dl_all]="Descargar toda esta carpeta: %s"
+[dl_select]="Elegir archivos/carpetas de aquí"
+[dl_check]="Marca lo que quieres descargar de:\n%s"
+[dl_one]="Elige un elemento para descargar:"
+[dl_list_fail]="No se pudo listar el contenido de Drive automáticamente.\nEscribe la ruta del elemento en el siguiente paso."
+[dl_manual]="Ruta del elemento en Drive (p. ej.: /my-files/carpeta/archivo.pdf):"
+[dl_where]="Elige dónde guardar en tu equipo"
+[t_save_prompt]="Carpeta de destino en tu equipo"
+[cq_dl]="Si ya existe un archivo con el mismo nombre en local, ¿qué hacer?"
+[d_keep]="Conservar ambos (renombrar)"
+[d_remove]="Borrar el archivo local y descargar la copia de la nube"
+[d_skip]="Omitir los existentes"
+[inst_ok]="Instalado.\nBusca «%s» en el menú de aplicaciones."
+[uninst_ok]="Desinstalado."
+[lang_q]="Elige un idioma"
+[opt_prompt]="Número de opción: "
+); }
+
+lang_de() { T+=(
+[app_name]="Proton Drive GUI (inoffiziell)"
+[no_bin]="Die offizielle proton-drive-CLI wurde nicht gefunden.\nLade sie von proton.me/download/drive/cli herunter, lege sie in ~/.local/bin ab und führe aus:\nchmod +x proton-drive"
+[menu_q]="Was möchtest du tun?"
+[m_upload]="Hochladen" [m_download]="Herunterladen" [m_lang]="Sprache"
+[col_choose]="Wählen" [col_type]="Typ" [col_name]="Name"
+[nothing]="Nichts ausgewählt."
+[not_found]="Nicht gefunden:\n%s"
+[empty]="Dieser Ordner ist leer."
+[loc]="Aktueller Ort in Proton Drive:\n%s"
+[here]="Hierhin hochladen: %s"
+[last]="Letztes Ziel: %s"
+[back]="Zurück"
+[newf]="Neuen Ordner hier erstellen"
+[manual]="Ordnernamen manuell eingeben"
+[new_name]="Name des neuen Ordners in %s:"
+[mk_fail]="Der Ordner „%s“ konnte nicht erstellt werden.\nErstelle ihn auf der Proton-Drive-Webseite."
+[list_fail_up]="Drive-Ordner konnten nicht automatisch aufgelistet werden.\nGib den Ordnernamen im nächsten Schritt manuell ein."
+[manual_prompt]="Gib den Ordnernamen in Proton Drive ein (z. B. others)\noder lass das Feld leer für den aktuellen Ordner: %s"
+[up_what]="Was möchtest du hochladen?"
+[w_files]="Dateien" [w_folder]="Einen ganzen Ordner"
+[pick_files]="Dateien zum Hochladen wählen"
+[pick_folder]="Ordner zum Hochladen wählen"
+[t_path_help]="Gib einen Pfad ein (oder ziehe ihn hierher) und drücke Enter. Leere Zeile beendet. Tab vervollständigt Namen."
+[t_path_prompt]="Pfad: "
+[t_dir_prompt]="Ordnerpfad: "
+[cq_up]="Was soll passieren, wenn in Drive bereits eine Datei mit gleichem Namen existiert?\n(Identische Dateien werden automatisch übersprungen)"
+[c_keep]="Beide behalten (neue umbenennen)"
+[c_rev]="Neue Revision der vorhandenen Datei"
+[c_replace]="Alte ersetzen (die alte kommt in den Papierkorb)"
+[c_skip]="Datei überspringen"
+[l_keep]="beide behalten" [l_rev]="neue Revision" [l_replace]="ersetzen (alte kommt in den Papierkorb)" [l_skip]="überspringen"
+[l_remove]="ACHTUNG: passende lokale Datei löschen und Cloud-Kopie herunterladen"
+[l_none]="nicht festgelegt (das Tool fragt eventuell)"
+[confirm_up]="Hochladen bestätigen"
+[confirm_dl]="Herunterladen bestätigen"
+[and_more]="... und %d weitere"
+[sum_up]="Wird hochgeladen:\n%s\nNach: %s\nBei Namenskonflikt: %s\n(Vorhandene Ordner werden zusammengeführt)"
+[sum_dl]="Wird heruntergeladen:\n%s\nNach: %s\nBei Namenskonflikt: %s"
+[proceed]="Möchtest du fortfahren?"
+[yn_prompt]="Fortfahren? [j/N] "
+[aborted]="Abgebrochen."
+[uploading]="Hochladen nach %s ...\n(zum Stoppen auf Abbrechen klicken)"
+[downloading]="Herunterladen nach %s ...\n(zum Stoppen auf Abbrechen klicken)"
+[up_ok]="Hochladen abgeschlossen nach:\n%s"
+[dl_ok]="Herunterladen abgeschlossen nach:\n%s"
+[open_q]="Ordner öffnen?"
+[cancelled]="Abgebrochen. Einige Elemente wurden eventuell schon übertragen."
+[up_fail]="Hochladen fehlgeschlagen.\n\n%s\n\nVersuche:\n• proton-drive auth login\n• Prüfe, ob der Ordner in Proton Drive existiert"
+[dl_fail]="Herunterladen fehlgeschlagen.\n\n%s\n\nVersuche:\n• proton-drive auth login\n• Prüfe, ob der Pfad in Proton Drive existiert"
+[dl_all]="Diesen ganzen Ordner herunterladen: %s"
+[dl_select]="Dateien/Ordner von hier auswählen"
+[dl_check]="Markiere, was du herunterladen möchtest aus:\n%s"
+[dl_one]="Wähle ein Element zum Herunterladen:"
+[dl_list_fail]="Drive-Inhalte konnten nicht automatisch aufgelistet werden.\nGib den Pfad im nächsten Schritt manuell ein."
+[dl_manual]="Pfad des Elements in Drive (z. B. /my-files/ordner/datei.pdf):"
+[dl_where]="Wähle, wo auf deinem Computer gespeichert wird"
+[t_save_prompt]="Zielordner auf deinem Computer"
+[cq_dl]="Was soll passieren, wenn lokal bereits eine Datei mit gleichem Namen existiert?"
+[d_keep]="Beide behalten (umbenennen)"
+[d_remove]="Lokale Datei löschen und Cloud-Kopie herunterladen"
+[d_skip]="Vorhandene überspringen"
+[inst_ok]="Installiert.\nSuche im Anwendungsmenü nach „%s“."
+[uninst_ok]="Deinstalliert."
+[lang_q]="Sprache wählen"
+[opt_prompt]="Nummer der Option: "
+); }
+
+detect_lang() {
+  local l="${PDRIVE_LANG:-}"
+  [[ -z "$l" && -f "$CONF_DIR/lang" ]] && l=$(<"$CONF_DIR/lang")
+  [[ -z "$l" ]] && l="${LC_ALL:-${LC_MESSAGES:-${LANG:-en}}}"
+  l="${l%%[_.@-]*}"; l="${l,,}"
+  case "$l" in en|ar|fr|es|de) echo "$l" ;; *) echo en ;; esac
+}
+load_lang() { lang_en; [[ "$LANG_CODE" != en ]] && "lang_$LANG_CODE"; }
+LANG_CODE="$(detect_lang)"; load_lang
+TITLE="Proton Drive"
+
+# t KEY [args...]  -> translated text (printf template)
+t() { local f="${T[$1]:-$1}"; shift; printf "$f" "$@"; }
+
+# =====================================================================
+#  UI helpers
+# =====================================================================
+HAS_GUI=0
+if command -v zenity >/dev/null 2>&1 && [[ -n "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]]; then HAS_GUI=1; fi
+
+zt() { printf '%s' "$1" | sed 's/&/\&amp;/g; s/</\&lt;/g; s/>/\&gt;/g'; }   # escape for zenity markup
+
+say() { if (( HAS_GUI )); then zenity --info  --no-wrap --title="$TITLE" --text="$(zt "$1")" 2>/dev/null; else printf '%s\n' "$1"; fi; }
+err() { if (( HAS_GUI )); then zenity --error --no-wrap --title="$TITLE" --text="$(zt "$1")" 2>/dev/null; else printf '❌ %s\n' "$1"; fi; }
+
+BIN=""
+need_bin() {
+  local c
+  for c in "${PROTON_BIN:-}" "$(command -v proton-drive 2>/dev/null)" \
+           "$BIN_DIR/proton-drive" "$HOME/Downloads/proton-drive" "$HOME/proton-drive"; do
+    if [[ -n "$c" && -x "$c" ]]; then BIN="$c"; return 0; fi
+  done
+  err "$(t no_bin)"; exit 1
+}
+
+ask_text() {   # $1 prompt  $2 default
+  if (( HAS_GUI )); then
+    zenity --entry --title="$TITLE" --text="$(zt "$1")" --entry-text="$2" 2>/dev/null
+  else
+    local r; read -e -r -i "$2" -p "$1: " r; printf '%s' "$r"
+  fi
+}
+
+pick() {       # $1 text, then options... ; prints the chosen option
+  local text="$1"; shift
+  if (( HAS_GUI )); then
+    zenity --list --title="$TITLE" --text="$(zt "$text")" --column="$(t col_choose)" \
+           --width=540 --height=460 "$@" 2>/dev/null
+  else
+    printf '%s\n' "$text" >&2
+    local o; PS3="$(t opt_prompt)"
+    select o in "$@"; do
+      if [[ -n "$o" ]]; then printf '%s' "$o"; return 0; fi
+    done
+    return 1
+  fi
+}
+
+confirm() {    # $1 title  $2 summary
+  if (( HAS_GUI )); then
+    zenity --question --title="$1" --no-wrap --text="$(zt "$2")"$'\n\n'"$(t proceed)" 2>/dev/null
+  else
+    printf '%s\n' "$2"; local ok; read -r -p "$(t yn_prompt)" ok
+    [[ "$ok" =~ ^[yYoOsSjJنن]$ ]]
+  fi
+}
+
+# run_job "progress text" cmd args...   ->  JOB_RC, JOB_OUT   (130 = cancelled)
+JOB_RC=0; JOB_OUT=""
+run_job() {
+  local text="$1"; shift
+  JOB_RC=0; JOB_OUT=""
+  if (( HAS_GUI )); then
+    local tmp pid; tmp=$(mktemp)
+    "$@" >"$tmp" 2>&1 </dev/null &
+    pid=$!
+    ( while kill -0 "$pid" 2>/dev/null; do echo; sleep 0.5; done; echo 100 ) | \
+      zenity --progress --pulsate --auto-close --width=420 --title="$TITLE" --text="$(zt "$text")" 2>/dev/null
+    if kill -0 "$pid" 2>/dev/null; then kill "$pid" 2>/dev/null; wait "$pid" 2>/dev/null; JOB_RC=130
+    else wait "$pid"; JOB_RC=$?; fi
+    JOB_OUT=$(<"$tmp"); rm -f "$tmp"
+  else
+    "$@"; JOB_RC=$?
+  fi
+}
+
+# =====================================================================
+#  Reading Drive listings (JSON schema is unofficial and may change).
+#  Prints  d<TAB>name  or  f<TAB>name  per item.
+# =====================================================================
+PY=$(cat <<'EOF'
+import sys, json
+t = sys.stdin.read()
+i = min([p for p in (t.find('['), t.find('{')) if p >= 0] or [-1])
+if i < 0: sys.exit(1)
+o, _ = json.JSONDecoder().raw_decode(t[i:])
+def items(o):
+    if isinstance(o, list): return o
+    if isinstance(o, dict):
+        for v in o.values():
+            if isinstance(v, list) and v and all(isinstance(x, dict) for x in v): return v
+    return []
+for it in items(o):
+    if not isinstance(it, dict): continue
+    name = it.get("name") or it.get("Name")
+    if isinstance(name, dict):
+        name = name.get("value") if name.get("ok", True) else None
+    t_ = str(it.get("type") or it.get("nodeType") or it.get("kind") or "").lower()
+    isdir = bool(it.get("isFolder") or it.get("isDirectory")) or "folder" in t_ or t_ in ("dir", "directory")
+    if name and "\n" not in name and "\t" not in name:
+        print(("d" if isdir else "f") + "\t" + name)
+EOF
+)
+
+ITEMS=()
+list_items() {
+  command -v python3 >/dev/null 2>&1 || return 1
+  local out
+  out=$("$BIN" filesystem list "$1" --json 2>/dev/null) || return 1
+  mapfile -t ITEMS < <(printf '%s' "$out" | python3 -c "$PY" 2>/dev/null)
+  return 0
+}
+
+trim() { sed 's/^[[:space:]]*//;s/[[:space:]]*$//' <<<"$1"; }
+
+# =====================================================================
+#  Upload
+# =====================================================================
+DEST=""; LAST_DEST="/my-files"; UP_FILES=()
+
+manual_dest() {
+  local base="$1" x
+  x=$(ask_text "$(t manual_prompt "$base")" "") || exit 0
+  x="$(trim "$x")"; x="${x%/}"
+  if   [[ -z "$x" ]];            then DEST="$base"
+  elif [[ "$x" == /my-files* ]]; then DEST="$x"
+  else                                DEST="$base/${x#/}"
+  fi
+}
+
+choose_dest() {
+  local cur="/my-files" opts choice line k n newname
+  while true; do
+    if list_items "$cur"; then
+      opts=("✅ $(t here "$cur")")
+      if [[ "$cur" == "/my-files" && "$LAST_DEST" != "/my-files" ]]; then opts+=("⭐ $(t last "$LAST_DEST")"); fi
+      [[ "$cur" != "/my-files" ]] && opts+=("⬆ $(t back)")
+      for line in "${ITEMS[@]}"; do
+        k="${line%%$'\t'*}"; n="${line#*$'\t'}"
+        [[ "$k" == d && -n "$n" && "$n" != */* ]] && opts+=("📁 $n")
+      done
+      opts+=("➕ $(t newf)" "✏ $(t manual)")
+      choice=$(pick "$(t loc "$cur")" "${opts[@]}") || exit 0
+      case "$choice" in
+        "✅ "*) DEST="$cur"; return ;;
+        "⭐ "*) DEST="$LAST_DEST"; return ;;
+        "⬆ "*)  cur="${cur%/*}" ;;
+        "📁 "*) cur="$cur/${choice#📁 }" ;;
+        "➕ "*)
+          newname=$(ask_text "$(t new_name "$cur")" "") || exit 0
+          newname="$(trim "${newname//\//}")"
+          if [[ -n "$newname" ]]; then
+            if "$BIN" filesystem create-folder "$cur" "$newname" >/dev/null 2>&1; then
+              cur="$cur/$newname"
+            else
+              err "$(t mk_fail "$newname")"
+            fi
+          fi ;;
+        "✏ "*)  manual_dest "$cur"; return ;;
+      esac
+    else
+      say "$(t list_fail_up)"
+      manual_dest "$cur"; return
+    fi
+  done
+}
+
+read_paths() {
+  printf '%s\n' "$(t t_path_help)"
+  local p
+  while true; do
+    read -e -r -p "$(t t_path_prompt)" p
+    [[ -z "$p" ]] && break
+    p="${p#\'}"; p="${p%\'}"; p="${p/#\~/$HOME}"
+    UP_FILES+=("$p")
+  done
+}
+
+cmd_upload() {
+  need_bin
+  local mode d out f c names n summary fstrat flabel
+  [[ -f "$CONF_DIR/last_dest" ]] && LAST_DEST=$(<"$CONF_DIR/last_dest")
+  UP_FILES=()
+
+  if (( $# > 0 )); then
+    UP_FILES=("$@")
+  else
+    mode=$(pick "$(t up_what)" "📄 $(t w_files)" "📁 $(t w_folder)") || exit 0
+    if [[ "$mode" == "📁 "* ]]; then
+      if (( HAS_GUI )); then
+        d=$(zenity --file-selection --directory --title="$(t pick_folder)" 2>/dev/null) || exit 0
+      else
+        read -e -r -p "$(t t_dir_prompt)" d; d="${d#\'}"; d="${d%\'}"; d="${d/#\~/$HOME}"
+      fi
+      UP_FILES=("$d")
+    elif (( HAS_GUI )); then
+      out=$(zenity --file-selection --multiple --separator=$'\n' --title="$(t pick_files)" 2>/dev/null) || exit 0
+      mapfile -t UP_FILES <<<"$out"
+    else
+      read_paths
+    fi
+  fi
+
+  (( ${#UP_FILES[@]} > 0 )) && [[ -n "${UP_FILES[0]}" ]] || { err "$(t nothing)"; exit 1; }
+  for f in "${UP_FILES[@]}"; do [[ -e "$f" ]] || { err "$(t not_found "$f")"; exit 1; }; done
+
+  choose_dest
+
+  c=$(pick "$(t cq_up)" "📎 $(t c_keep)" "🔁 $(t c_rev)" "♻ $(t c_replace)" "⏭ $(t c_skip)") || exit 0
+  fstrat="rename"; flabel="$(t l_keep)"
+  case "$c" in
+    "📎 "*) fstrat="rename";              flabel="$(t l_keep)" ;;
+    "🔁 "*) fstrat="create-new-revision"; flabel="$(t l_rev)" ;;
+    "♻ "*)  fstrat="replace";             flabel="$(t l_replace)" ;;
+    "⏭ "*)  fstrat="skip";                flabel="$(t l_skip)" ;;
+  esac
+
+  names=""; n=0
+  for f in "${UP_FILES[@]}"; do
+    (( n < 5 )) && names+="• $(basename "$f")"$'\n'
+    n=$((n+1))
+  done
+  (( n > 5 )) && names+="$(t and_more $((n-5)))"$'\n'
+  summary="$(t sum_up "$names" "$DEST" "$flabel")"
+  confirm "$(t confirm_up)" "$summary" || { (( HAS_GUI )) || t aborted; exit 0; }
+
+  command -v notify-send >/dev/null 2>&1 && notify-send "$TITLE" "…" 2>/dev/null
+  run_job "$(t uploading "$DEST")" "$BIN" filesystem upload -f "$fstrat" -d merge "${UP_FILES[@]}" "$DEST"
+
+  if   (( JOB_RC == 0 ));   then echo "$DEST" > "$CONF_DIR/last_dest"; say "✅ $(t up_ok "$DEST")"
+  elif (( JOB_RC == 130 )); then say "⚠ $(t cancelled)"; exit 1
+  else err "$(t up_fail "${JOB_OUT: -400}")"; exit 1
+  fi
+}
+
+# =====================================================================
+#  Download
+# =====================================================================
+SEL=()
+
+select_here() {
+  local cur="$1" line k n sel s icon
+  SEL=()
+  if (( HAS_GUI )); then
+    local args=()
+    for line in "${ITEMS[@]}"; do
+      k="${line%%$'\t'*}"; n="${line#*$'\t'}"
+      [[ -n "$n" ]] || continue
+      [[ "$k" == d ]] && icon="📁" || icon="📄"
+      args+=(FALSE "$icon" "$n")
+    done
+    (( ${#args[@]} )) || { say "$(t empty)"; return; }
+    sel=$(zenity --list --checklist --title="$TITLE" --text="$(zt "$(t dl_check "$cur")")" \
+          --column="$(t col_choose)" --column="$(t col_type)" --column="$(t col_name)" \
+          --print-column=3 --separator=$'\n' --width=600 --height=500 "${args[@]}" 2>/dev/null) || return
+    mapfile -t sel <<<"$sel"
+    for s in "${sel[@]}"; do [[ -n "$s" ]] && SEL+=("$cur/${s//\//\\/}"); done   # remote paths escape "/" in names
+  else
+    local labels=() choice
+    for line in "${ITEMS[@]}"; do
+      k="${line%%$'\t'*}"; n="${line#*$'\t'}"
+      [[ -n "$n" ]] || continue
+      [[ "$k" == d ]] && icon="📁" || icon="📄"
+      labels+=("$icon $n")
+    done
+    (( ${#labels[@]} )) || { say "$(t empty)"; return; }
+    choice=$(pick "$(t dl_one)" "${labels[@]}") || return
+    s="${choice#* }"; SEL=("$cur/${s//\//\\/}")
+  fi
+}
+
+browse_remote() {
+  local cur="/my-files" opts choice line k n x
+  while true; do
+    if list_items "$cur"; then
+      opts=()
+      [[ "$cur" != "/my-files" ]] && opts+=("⬇ $(t dl_all "$cur")")
+      opts+=("☑ $(t dl_select)")
+      [[ "$cur" != "/my-files" ]] && opts+=("⬆ $(t back)")
+      for line in "${ITEMS[@]}"; do
+        k="${line%%$'\t'*}"; n="${line#*$'\t'}"
+        [[ "$k" == d && -n "$n" && "$n" != */* ]] && opts+=("📁 $n")
+      done
+      choice=$(pick "$(t loc "$cur")" "${opts[@]}") || exit 0
+      case "$choice" in
+        "⬇ "*) SEL=("$cur"); return ;;
+        "☑ "*) select_here "$cur"; (( ${#SEL[@]} )) && return ;;
+        "⬆ "*) cur="${cur%/*}" ;;
+        "📁 "*) cur="$cur/${choice#📁 }" ;;
+      esac
+    else
+      say "$(t dl_list_fail)"
+      x=$(ask_text "$(t dl_manual)" "$cur") || exit 0
+      x="$(trim "$x")"; [[ -n "$x" ]] || exit 0
+      SEL=("$x"); return
+    fi
+  done
+}
+
+cmd_download() {
+  need_bin
+  local lastdl="$HOME/Downloads" dir help copts c fargs=() flabel f names n summary
+  [[ -f "$CONF_DIR/last_download_dir" ]] && lastdl=$(<"$CONF_DIR/last_download_dir")
+
+  SEL=()
+  if (( $# > 0 )); then SEL=("$@"); else browse_remote; fi
+  (( ${#SEL[@]} > 0 )) || { err "$(t nothing)"; exit 1; }
+
+  if (( HAS_GUI )); then
+    dir=$(zenity --file-selection --directory --filename="$lastdl/" --title="$(t dl_where)" 2>/dev/null) || exit 0
+  else
+    dir=$(ask_text "$(t t_save_prompt)" "$lastdl"); dir="${dir/#\~/$HOME}"
+  fi
+  [[ -n "$dir" ]] || exit 0
+  mkdir -p "$dir" || { err "$(t not_found "$dir")"; exit 1; }
+
+  # Offer only the conflict strategies this CLI version actually supports.
+  help=$("$BIN" filesystem download --help 2>&1)
+  has() { grep -qiE "(^|[^a-z-])$1([^a-z-]|$)" <<<"$help"; }
+  copts=()
+  has rename && copts+=("📎 $(t d_keep)")
+  has remove && copts+=("♻ $(t d_remove)")
+  has skip   && copts+=("⏭ $(t d_skip)")
+  flabel="$(t l_none)"
+  if (( ${#copts[@]} )); then
+    c=$(pick "$(t cq_dl)" "${copts[@]}") || exit 0
+    case "$c" in
+      "📎 "*) fargs=(-f rename); flabel="$(t l_keep)" ;;
+      "♻ "*)  fargs=(-f remove); flabel="⚠ $(t l_remove)" ;;
+      "⏭ "*)  fargs=(-f skip);   flabel="$(t l_skip)" ;;
+    esac
+  fi
+  has merge && fargs+=(-d merge)
+
+  names=""; n=0
+  for f in "${SEL[@]}"; do
+    (( n < 5 )) && names+="• ${f##*/}"$'\n'
+    n=$((n+1))
+  done
+  (( n > 5 )) && names+="$(t and_more $((n-5)))"$'\n'
+  summary="$(t sum_dl "$names" "$dir" "$flabel")"
+  confirm "$(t confirm_dl)" "$summary" || { (( HAS_GUI )) || t aborted; exit 0; }
+
+  run_job "$(t downloading "$dir")" "$BIN" filesystem download "${fargs[@]}" "${SEL[@]}" "$dir"
+
+  if (( JOB_RC == 0 )); then
+    echo "$dir" > "$CONF_DIR/last_download_dir"
+    if (( HAS_GUI )); then
+      zenity --question --no-wrap --title="$TITLE" \
+        --text="$(zt "✅ $(t dl_ok "$dir")")"$'\n\n'"$(t open_q)" 2>/dev/null && xdg-open "$dir" >/dev/null 2>&1
+    else
+      printf '✅ %s\n' "$(t dl_ok "$dir")"
+    fi
+  elif (( JOB_RC == 130 )); then say "⚠ $(t cancelled)"; exit 1
+  else err "$(t dl_fail "${JOB_OUT: -400}")"; exit 1
+  fi
+}
+
+# =====================================================================
+#  Language, menu, install
+# =====================================================================
+cmd_lang() {
+  local code="${1:-}" c
+  if [[ -z "$code" ]]; then
+    c=$(pick "$(t lang_q)" "English" "العربية" "Français" "Español" "Deutsch") || return 0
+    case "$c" in
+      English) code=en ;; العربية) code=ar ;; Français) code=fr ;; Español) code=es ;; Deutsch) code=de ;;
+    esac
+  fi
+  case "$code" in
+    en|ar|fr|es|de) echo "$code" > "$CONF_DIR/lang"; LANG_CODE="$code"; load_lang ;;
+    *) echo "Supported: en ar fr es de" >&2; return 1 ;;
+  esac
+}
+
+cmd_menu() {
+  need_bin
+  local c
+  c=$(pick "$(t menu_q)" "⬆ $(t m_upload)" "⬇ $(t m_download)" "🌐 $(t m_lang)") || exit 0
+  case "$c" in
+    "⬆ "*) cmd_upload ;;
+    "⬇ "*) cmd_download ;;
+    "🌐 "*) cmd_lang; cmd_menu ;;
+  esac
+}
+
+cmd_install() {
+  local desktop=0 icon_src="" d
+  while (( $# )); do
+    case "$1" in
+      --desktop) desktop=1; shift ;;
+      --icon)    icon_src="${2:-}"; shift 2 ;;
+      *) echo "Unknown option: $1" >&2; exit 1 ;;
+    esac
+  done
+  mkdir -p "$BIN_DIR" "$APP_DIR" "$ICON_BASE/scalable/apps" "$ICON_BASE/256x256/apps"
+  [[ "$SELF" == "$BIN_DIR/$APP_ID" ]] || install -m 755 "$SELF" "$BIN_DIR/$APP_ID"
+
+  if [[ -n "$icon_src" ]]; then
+    [[ -f "$icon_src" ]] || { echo "Icon not found: $icon_src" >&2; exit 1; }
+    case "$icon_src" in
+      *.svg) cp "$icon_src" "$ICON_BASE/scalable/apps/$APP_ID.svg"; rm -f "$ICON_BASE/256x256/apps/$APP_ID.png" ;;
+      *)     cp "$icon_src" "$ICON_BASE/256x256/apps/$APP_ID.png"; rm -f "$ICON_BASE/scalable/apps/$APP_ID.svg" ;;
+    esac
+  elif [[ ! -f "$ICON_BASE/scalable/apps/$APP_ID.svg" && ! -f "$ICON_BASE/256x256/apps/$APP_ID.png" ]]; then
+    cat > "$ICON_BASE/scalable/apps/$APP_ID.svg" <<'SVG'
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256">
+<!-- generic icon, NOT the Proton logo -->
+<rect width="256" height="256" rx="56" fill="#6d4aff"/>
+<path d="M82 178a38 38 0 0 1 2-76 54 54 0 0 1 100 16 31 31 0 0 1-2 60z" fill="#fff"/>
+<path d="M128 168v-52m0 0-22 22m22-22 22 22" stroke="#6d4aff" stroke-width="13" fill="none" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
+SVG
+  fi
+
+  cat > "$APP_DIR/$APP_ID.desktop" <<EOF
+[Desktop Entry]
+Type=Application
+Name=Proton Drive GUI (unofficial)
+Name[ar]=واجهة Proton Drive (غير رسمية)
+Name[fr]=Proton Drive GUI (non officiel)
+Name[es]=Proton Drive GUI (no oficial)
+Name[de]=Proton Drive GUI (inoffiziell)
+Comment=Upload and download files with Proton Drive
+Exec=$BIN_DIR/$APP_ID
+Icon=$APP_ID
+Terminal=false
+Categories=Network;FileTransfer;
+Keywords=proton;drive;upload;download;cloud;
+Actions=Upload;Download;
+
+[Desktop Action Upload]
+Name=Upload
+Name[ar]=رفع
+Name[fr]=Envoyer
+Name[es]=Subir
+Name[de]=Hochladen
+Exec=$BIN_DIR/$APP_ID upload %F
+
+[Desktop Action Download]
+Name=Download
+Name[ar]=تنزيل
+Name[fr]=Télécharger
+Name[es]=Descargar
+Name[de]=Herunterladen
+Exec=$BIN_DIR/$APP_ID download
+EOF
+  chmod +x "$APP_DIR/$APP_ID.desktop"
+
+  if (( desktop )); then
+    d="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+    if [[ -d "$d" ]]; then
+      cp "$APP_DIR/$APP_ID.desktop" "$d/$APP_ID.desktop"; chmod +x "$d/$APP_ID.desktop"
+      gio set "$d/$APP_ID.desktop" metadata::trusted true 2>/dev/null || true
+    fi
+  fi
+  update-desktop-database "$APP_DIR" 2>/dev/null || true
+  gtk-update-icon-cache -f -t "$ICON_BASE" 2>/dev/null || true
+  printf '✓ %s\n' "$(t inst_ok "$(t app_name)")"
+}
+
+cmd_uninstall() {
+  local d
+  d="$(xdg-user-dir DESKTOP 2>/dev/null || echo "$HOME/Desktop")"
+  rm -f "$BIN_DIR/$APP_ID" "$APP_DIR/$APP_ID.desktop" "$d/$APP_ID.desktop" \
+        "$ICON_BASE/scalable/apps/$APP_ID.svg" "$ICON_BASE/256x256/apps/$APP_ID.png"
+  update-desktop-database "$APP_DIR" 2>/dev/null || true
+  printf '✓ %s\n' "$(t uninst_ok)"
+}
+
+usage() {
+  sed -n '2,15p' "$SELF" | sed 's/^# \{0,1\}//'
+}
+
+main() {
+  case "${1:-menu}" in
+    menu)            cmd_menu ;;
+    upload|up)       shift; cmd_upload "$@" ;;
+    download|down|dl) shift; cmd_download "$@" ;;
+    install)         shift; cmd_install "$@" ;;
+    uninstall)       cmd_uninstall ;;
+    lang)            shift; cmd_lang "$@" ;;
+    -v|--version)    echo "$APP_ID $VERSION" ;;
+    -h|--help|help)  usage ;;
+    *) if [[ -e "$1" ]]; then cmd_upload "$@"; else usage; exit 1; fi ;;
+  esac
+}
+
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then main "$@"; fi
